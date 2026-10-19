@@ -1,0 +1,30 @@
+[project]
+name = "papertrail"
+version = "0.2.0"
+description = "Literature Concordance"
+readme = "README.md"
+authors = [
+    {name = "PaperTrail Contributors"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "biopython>=1.81",
+    "flask>=3.0",
+    "matplotlib>=3.7",
+    "mygene>=3.2",
+    "networkx>=3.0",
+    "numpy>=1.24",
+    "obonet>=1.0",
+    "pandas>=2.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "rapidfuzz>=3.0",
+    "scikit-learn>=1.3",
+    "scipy>=1.10",
+    "seaborn>=0.12",
+    "tqdm>=4.65",
+    "yake>=0.4.8",
+]
+
+[tool.uv]
+package = false

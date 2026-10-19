@@ -2,6 +2,7 @@
 flask>=3.0
 pyyaml>=6.0
 biopython>=1.81          # Entrez / PubMed access
+python-dotenv>=1.0.0     # loads .env automatically for NCBI credentials
 mygene>=3.2              # gene alias expansion (stage 1)
 rapidfuzz>=3.0           # fuzzy entity matching (stages 1, 4)
 tqdm>=4.65

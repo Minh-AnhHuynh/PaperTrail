@@ -40,11 +40,24 @@ flags any tier resting on a single paper.
 
 ## Quick start
 
+Install [`uv`](https://docs.astral.sh/uv/) if you haven't already:
+
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# or via pip: pip install uv
+```
+
+Clone the repository and run PaperTrail:
+
 ```bash
 git clone https://github.com/<your-username>/PaperTrail.git
 cd PaperTrail
-pip install -r requirements.txt
-python papertrail_app.py --port 5050
+uv sync
+uv run python papertrail_app.py --port 5050
 ```
 
 Open <http://localhost:5050>. Start with **Demo mode** — four worked examples
@@ -94,7 +107,7 @@ proxy called something else entirely — it will be picked up automatically.
 To check what PaperTrail sees:
 
 ```bash
-python llm_gateway.py
+uv run python llm_gateway.py
 ```
 
 To set one explicitly:
@@ -116,7 +129,7 @@ all.
 The web app is a front end over a six-stage pipeline you can run headless:
 
 ```bash
-python run_pipeline.py --predictions predictions.yaml --output-dir results/
+uv run python run_pipeline.py --predictions predictions.yaml --output-dir results/
 ```
 
 | Stage | Does |
@@ -168,7 +181,18 @@ papertrail_vocab.json      Disease, cell type, and tissue vocabulary
 
 ## Requirements
 
-Python 3.9+. Install with `pip install -r requirements.txt`.
+Managed with [`uv`](https://docs.astral.sh/uv/) (Python 3.10+).
+
+Install all dependencies into the local virtual environment:
+
+```bash
+uv sync
+```
+
+Alternatively, if you prefer traditional `pip`:
+```bash
+pip install -r requirements.txt
+```
 
 `sentence-transformers` is optional and enables embedding-based relevance
 scoring in stage 4; without it, stage 4 uses keyword matching.
