@@ -42,27 +42,80 @@ import yaml
 from Bio import Entrez
 from tqdm import tqdm
 
+# ── Environment & .env Loading ──────────────────────────────────────────────
+def _load_env() -> None:
+    """Load .env file if present, using python-dotenv or a fallback parser."""
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_file)
+    except ImportError:
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+_load_env()
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 CACHE_DIR   = Path(__file__).parent / "cache"
 RECORDS_DIR = CACHE_DIR / "pubmed_records"
 RECORDS_DIR.mkdir(exist_ok=True, parents=True)
 
-# ── NCBI credentials ───────────────────────────────────────────────────────
-Entrez.email = os.environ.get("NCBI_EMAIL", "litrev-pipeline@example.com")
+# ── NCBI credentials & Rate Limits ─────────────────────────────────────────
+DEFAULT_EMAIL = "litrev-pipeline@example.com"
+_env_email = os.environ.get("NCBI_EMAIL", "").strip()
+Entrez.email = _env_email if _env_email else DEFAULT_EMAIL
 Entrez.tool  = "litrev-pipeline/1.0"
+
 # Defensive reset: if a previous module set api_key to "" (empty string),
 # Biopython sends api_key= in every URL → NCBI HTTP 400.
 # Only set api_key when it has a real value.
-_api_key = os.environ.get("NCBI_API_KEY", "")
+_api_key = os.environ.get("NCBI_API_KEY", "").strip()
 if _api_key:
     Entrez.api_key = _api_key
-elif Entrez.api_key == "":
+elif getattr(Entrez, "api_key", None) == "":
     Entrez.api_key = None   # clear any empty string left by earlier modules
 
 # ── Rate limits ────────────────────────────────────────────────────────────
 MAX_PMIDS_PER_QUERY = 80        # default cap per query; lowered to control PMC enrichment volume
-SLEEP_BETWEEN_CALLS = 0.34      # 3 req/s without API key; 10/s with key
 RETRY_LIMIT         = 3
+
+def get_sleep_interval() -> float:
+    """Return interval between NCBI requests: 0.10s (10/s) with API key, 0.34s (3/s) without."""
+    key = getattr(Entrez, "api_key", None) or os.environ.get("NCBI_API_KEY", "").strip()
+    return 0.10 if key else 0.34
+
+# Backward-compatible global (computed dynamically via get_sleep_interval() at call sites)
+SLEEP_BETWEEN_CALLS = get_sleep_interval()
+
+def check_ncbi_credentials_health() -> None:
+    """Warn if running on default placeholder email or unauthenticated rate limits."""
+    email = getattr(Entrez, "email", "") or ""
+    key = getattr(Entrez, "api_key", None) or os.environ.get("NCBI_API_KEY", "").strip()
+    if not email or "example.com" in email.lower():
+        print("\n" + "=" * 68)
+        print(" [WARNING] NCBI_EMAIL is unset or using a placeholder address:")
+        print(f"           '{email}'")
+        print(" NCBI policy requires a valid contact email. Dummy emails risk IP bans.")
+        print(" Set your real email in .env or via: export NCBI_EMAIL='you@domain.com'")
+        print("=" * 68 + "\n")
+    if key:
+        print(f"  [NCBI] API key detected: unlocked 10 requests/second rate limit (sleep=0.10s).")
+    else:
+        print(f"  [NCBI] No API key detected: using safe 3 requests/second rate limit (sleep=0.34s).")
+
 
 # ── PMC enrichment settings ────────────────────────────────────────────────
 PMC_CONTEXT_WINDOW = 1          # sentences before/after alias hit to include
@@ -94,14 +147,20 @@ PMC_SECTIONS_SKIP = {
 # ══════════════════════════════════════════════════════════════════
 
 def _retry(fn, *args, **kwargs):
-    """Exponential-backoff retry wrapper."""
+    """Exponential-backoff retry wrapper with HTTP 429 rate-limit backoff."""
     last_err = None
     for attempt in range(RETRY_LIMIT):
         try:
             return fn(*args, **kwargs)
         except Exception as e:
             last_err = e
-            time.sleep(2 ** attempt)
+            err_str = str(e).lower()
+            if "429" in err_str or "too many requests" in err_str:
+                sleep_time = max(2.0, float(2 ** (attempt + 1)))
+                print(f"  [NCBI 429] Rate limited. Backing off for {sleep_time:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT})...")
+                time.sleep(sleep_time)
+            else:
+                time.sleep(2 ** attempt)
     raise last_err
 
 
@@ -117,7 +176,7 @@ def search_pmids(query: str, retmax: int = MAX_PMIDS_PER_QUERY) -> List[str]:
         h.close()
         return rec["IdList"]
     pmids = _retry(_do)
-    time.sleep(SLEEP_BETWEEN_CALLS)
+    time.sleep(get_sleep_interval())
     return pmids
 
 
@@ -169,7 +228,7 @@ def fetch_records(pmids: Iterable[str]) -> List[Dict[str, Any]]:
                 tmp = path.with_suffix(".tmp")
                 tmp.write_text(json.dumps(parsed, indent=2, default=str))
                 tmp.replace(path)
-        time.sleep(SLEEP_BETWEEN_CALLS)
+        time.sleep(get_sleep_interval())
 
     return list(cached.values()) + fetched
 
@@ -274,7 +333,7 @@ def _batch_pmids_to_pmcids(pmids: List[str],
             return rec
         try:
             rec = _retry(_do)
-            time.sleep(SLEEP_BETWEEN_CALLS)
+            time.sleep(get_sleep_interval())
             for link_set in rec:
                 src_ids = link_set.get("IdList", [])
                 # A LinkSet covering more than one source PMID means the
@@ -402,7 +461,7 @@ def _extract_pmc_sentences(
             h.close()
             return raw
         xml_bytes = _retry(_do)
-        time.sleep(SLEEP_BETWEEN_CALLS)
+        time.sleep(get_sleep_interval())
     except Exception:
         return [], []
 
@@ -574,6 +633,8 @@ def retrieve_for_all_queries(
     the two new keyword arguments have safe defaults so existing run_pipeline.py
     callers that pass only (queries_path, output_path) will work unchanged.
     """
+    check_ncbi_credentials_health()
+
     with open(queries_path) as f:
         queries_data = yaml.safe_load(f)
 

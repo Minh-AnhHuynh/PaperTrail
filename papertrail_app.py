@@ -32,6 +32,31 @@ import os, sys, json, re, threading, queue, time, traceback
 from pathlib import Path
 from flask import Flask, render_template_string, request, jsonify, Response
 
+def _load_env() -> None:
+    """Load .env file if present, using python-dotenv or a fallback parser."""
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_file)
+    except ImportError:
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+_load_env()
+
 import llm_gateway
 
 app = Flask(__name__)
@@ -530,8 +555,12 @@ def run_pipeline_async(run_id, run_dir, pipeline_dir,
 
         emit("STAGE:3")
         import stage3_retrieve_pubmed as s3; s3.RECORDS_DIR = cache_dir
-        from Bio import Entrez; Entrez.email = ncbi_email
-        if ncbi_key: Entrez.api_key = ncbi_key
+        from Bio import Entrez
+        Entrez.email = ncbi_email
+        if ncbi_key:
+            Entrez.api_key = ncbi_key
+        else:
+            Entrez.api_key = None
         s3.retrieve_for_all_queries(q_yaml, lit_raw,
             predictions_path=expanded, skip_pmc=skip_pmc)
         with open(lit_raw) as f: lit = json.load(f)
@@ -674,8 +703,8 @@ def start_run():
     t = threading.Thread(target=run_pipeline_async, args=(
         rid, rd, Path(p.get("pipeline_dir","") or str(BASE)),
         yt, p.get("skip_pmc",True),
-        p.get("ncbi_email","litrev@example.com"),
-        p.get("ncbi_api_key",""),
+        p.get("ncbi_email", "").strip() or os.environ.get("NCBI_EMAIL", "litrev@example.com"),
+        p.get("ncbi_api_key", "").strip() or os.environ.get("NCBI_API_KEY", ""),
         p.get("project_name","My Project"),
     ), daemon=True)
     t.start()

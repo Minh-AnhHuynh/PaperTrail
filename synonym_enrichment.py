@@ -72,7 +72,7 @@ def _fetch_mesh_synonyms(term: str) -> List[str]:
             return []
 
         # Step 2: fetch the full MeSH record
-        time.sleep(0.35)   # NCBI rate limit
+        time.sleep(0.10 if getattr(Entrez, "api_key", None) else 0.35)   # NCBI rate limit
         h = Entrez.efetch(db="mesh", id=ids[0], rettype="full", retmode="text")
         text = h.read(); h.close()
         if isinstance(text, bytes):
